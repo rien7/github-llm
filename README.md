@@ -17,13 +17,13 @@ Use the demo to inspect behavior, not as infrastructure for your own workflows. 
 Take this GitHub URL:
 
 ```text
-https://github.com/rien7/github-llm/blob/main/src/index.mjs
+https://github.com/rien7/github-llm/blob/main/src/index.ts
 ```
 
 Replace `https://github.com` with your Worker origin and keep the rest unchanged:
 
 ```text
-https://your-worker.example/rien7/github-llm/blob/main/src/index.mjs
+https://your-worker.example/rien7/github-llm/blob/main/src/index.ts
 ```
 
 Result:
@@ -56,7 +56,7 @@ Cloudflare's docs do not require a fork. They just say to import the repository 
 - If you want to deploy this project as-is, import `rien7/github-llm`.
 - If you want to maintain your own version, fork it first and import your fork.
 
-This repo already contains the Worker entrypoint in [`src/index.mjs`](/Users/rien7/Developer/github-llm/src/index.mjs) and the Wrangler config in [`wrangler.jsonc`](/Users/rien7/Developer/github-llm/wrangler.jsonc).
+This repo already contains the Worker entrypoint in [`src/index.ts`](/Users/rien7/Developer/github-llm/src/index.ts) and the Wrangler config in [`wrangler.jsonc`](/Users/rien7/Developer/github-llm/wrangler.jsonc).
 
 ### 2. Configure the optional `GITHUB_TOKEN` secret
 
@@ -122,9 +122,12 @@ Behavior:
 Rendered directory HTML looks like this:
 
 ```html
-./src/
-<a href="/rien7/github-llm/tree/main">../</a>
-| <a href="/rien7/github-llm/blob/main/src/index.mjs">index.mjs</a>
+Path: ./src/
+
+Type        Size Modified         Name
+----        ---- --------         ----
+dir            - -                <a href="/rien7/github-llm/tree/main">../</a>
+file       13 KB 2026-03-16       <a href="/rien7/github-llm/blob/main/src/index.ts">index.ts</a>
 ```
 
 ## Local Development
@@ -146,7 +149,7 @@ Try:
 ```text
 http://localhost:8787/rien7/github-llm
 http://localhost:8787/rien7/github-llm/tree/main/src
-http://localhost:8787/rien7/github-llm/blob/main/src/index.mjs
+http://localhost:8787/rien7/github-llm/blob/main/src/index.ts
 ```
 
 For local development, you can create `.dev.vars` from the example file:

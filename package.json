@@ -5,6 +5,7 @@
 	"scripts": {
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
+		"generate-types": "wrangler types",
 		"start": "wrangler dev"
 	},
 	"devDependencies": {
