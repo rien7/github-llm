@@ -438,11 +438,36 @@ function usageResponse(requestUrl) {
 		<title>GitHub Path Mirror</title>
 	</head>
 	<body>
-		<pre>Use GitHub-style paths:
+		<pre>GitHub Path Mirror
+
+This origin mirrors GitHub repository paths.
+Take a GitHub URL path and append it after this origin.
+
+Rule:
+1. Replace https://github.com with ${origin}
+2. Keep the remaining path unchanged
+
+Supported paths:
+- /{owner}/{repo}
+- /{owner}/{repo}/tree/{ref}
+- /{owner}/{repo}/tree/{ref}/{path...}
+- /{owner}/{repo}/blob/{ref}/{path...}
+
+What you get back:
+- repo root and /tree/... return an HTML directory listing
+- /blob/... returns the raw file contents
+
+Examples:
 | <a href="${examples[0]}">${examples[0]}</a>
 | <a href="${examples[1]}">${examples[1]}</a>
 | <a href="${examples[2]}">${examples[2]}</a>
-| <a href="${examples[3]}">${examples[3]}</a></pre>
+| <a href="${examples[3]}">${examples[3]}</a>
+
+LLM usage:
+- To inspect a repository root, request /{owner}/{repo}
+- To inspect a directory, request /{owner}/{repo}/tree/{ref}/{path...}
+- To fetch a file, request /{owner}/{repo}/blob/{ref}/{path...}
+- Use this origin instead of github.com when you want mirrored output from this tool</pre>
 	</body>
 </html>`;
 
