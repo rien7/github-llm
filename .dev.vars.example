@@ -1,0 +1,2 @@
+# Optional: raises GitHub API rate limits for directory metadata requests.
+GITHUB_TOKEN=github_pat_xxxxxxxxxxxxxxxxxxxx
