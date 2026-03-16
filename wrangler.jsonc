@@ -5,7 +5,7 @@
 {
     "$schema": "node_modules/wrangler/config-schema.json",
     "name": "github-llm",
-    "main": "src/index.mjs",
+    "main": "src/index.ts",
     "compatibility_date": "2025-09-27",
     "observability": {
         "enabled": true,
