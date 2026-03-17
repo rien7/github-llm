@@ -1,4 +1,9 @@
-import { buildEntryHref, buildParentHref } from "./routing";
+import {
+    buildEntryHref,
+    buildGitHubStyleHref,
+    buildParentHref,
+    buildRepoRootHref,
+} from "./routing";
 import type {
     GitHubEntry,
     GitHubMetadata,
@@ -12,10 +17,10 @@ export function renderDirectoryListing({
     entries,
 }: RenderDirectoryListingArgs): Response {
     const pathSegments = repoPath ? repoPath.split("/") : [];
-    const currentLabel = pathSegments.length === 0 ? "./" : `./${repoPath}/`;
+    const currentLabel = formatDirectoryLabel(repo, repoPath);
     const sortedEntries = [...entries].sort(compareEntries);
     const lines = [
-        `Path: ${escapeHtml(currentLabel)}`,
+        `Path: ${renderBreadcrumbPath(repo, ref, repoPath)}`,
         "",
         `${padRight("Type", 6)} ${padLeft("Size", 9)} ${padRight("Modified", 16)} Name`,
         `${padRight("----", 6)} ${padLeft("----", 9)} ${padRight("--------", 16)} ----`,
@@ -166,6 +171,42 @@ function escapeHtml(value: string): string {
         .replaceAll("<", "&lt;")
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;");
+}
+
+function formatDirectoryLabel(repo: RenderDirectoryListingArgs["repo"], repoPath: string): string {
+    if (!repoPath) {
+        return `${repo.owner}/${repo.name}/`;
+    }
+
+    return `${repo.owner}/${repo.name}/${repoPath}/`;
+}
+
+function renderBreadcrumbPath(
+    repo: RenderDirectoryListingArgs["repo"],
+    ref: string | null,
+    repoPath: string,
+): string {
+    const rootHref = ref
+        ? buildGitHubStyleHref(repo, "tree", ref, "")
+        : buildRepoRootHref(repo);
+    const crumbs = [
+        `<a href="${rootHref}">${escapeHtml(`${repo.owner}/${repo.name}`)}</a>`,
+    ];
+
+    if (!repoPath) {
+        return `${crumbs[0]}/`;
+    }
+
+    const accumulatedPath: string[] = [];
+    for (const segment of repoPath.split("/")) {
+        accumulatedPath.push(segment);
+        const href = ref
+            ? buildGitHubStyleHref(repo, "tree", ref, accumulatedPath.join("/"))
+            : rootHref;
+        crumbs.push(`<a href="${href}">${escapeHtml(segment)}</a>`);
+    }
+
+    return `${crumbs.join("/")}/`;
 }
 
 function formatEntryLine(

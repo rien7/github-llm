@@ -122,7 +122,7 @@ Behavior:
 Rendered directory HTML looks like this:
 
 ```html
-Path: ./src/
+Path: <a href="/rien7/github-llm/tree/main">rien7/github-llm</a>/<a href="/rien7/github-llm/tree/main/src">src</a>/
 
 Type        Size Modified         Name
 ----        ---- --------         ----
