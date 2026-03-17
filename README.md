@@ -30,6 +30,7 @@ Result:
 
 - `/{owner}/{repo}` and `/tree/...` return a simple HTML directory listing
 - `/blob/...` returns the raw file contents
+- `/query?repo={owner}%2F{repo}&q={search}` returns HTML code search results with line numbers and +/-2 lines of context
 
 That rule is all an LLM needs:
 
@@ -111,13 +112,18 @@ Supported paths:
 - `/{owner}/{repo}/tree/{ref}`
 - `/{owner}/{repo}/tree/{ref}/{path...}`
 - `/{owner}/{repo}/blob/{ref}/{path...}`
+- `/query?repo={owner}%2F{repo}&q={search}`
 
 Behavior:
 
 - Repository root uses the repository default branch.
 - `tree` routes return a plain HTML directory listing.
 - `blob` routes return the raw file contents from `raw.githubusercontent.com`.
+- `query` routes use GitHub code search, then fetch matched files and render one snippet per file with the matching line and +/-2 lines of context.
 - Branch and tag names that contain `/` are supported by progressively resolving `ref` vs `path`.
+- The `repo` query parameter should be the repository full name. Use `URLSearchParams` when constructing the URL so `owner/repo` is serialized safely as `owner%2Frepo`.
+- The Worker automatically appends `repo:{owner}/{repo}` to the GitHub code search query. `q` may include normal GitHub code search qualifiers, but you should not repeat the repo qualifier unless you intentionally want GitHub to reject conflicting constraints.
+- GitHub's code search API currently requires authentication and searches the repository default branch. The index only covers files smaller than 384 KB.
 
 Rendered directory HTML looks like this:
 
@@ -128,6 +134,17 @@ Type        Size Modified         Name
 ----        ---- --------         ----
 dir            - -                <a href="/rien7/github-llm/tree/main">../</a>
 file       13 KB 2026-03-16       <a href="/rien7/github-llm/blob/main/src/index.ts">index.ts</a>
+```
+
+Rendered search HTML looks like this:
+
+```html
+path: <a href="https://github.com/rien7/github-llm/blob/main/src/index.ts#L14">src/index.ts</a>
+12:     const url = new URL(request.url);
+13:     if (url.pathname.replace(/\/+$/g, "") === "/query") {
+14:         const <mark>query</mark>Route = parseQueryRoute(url);
+15:         if (!queryRoute.ok) {
+16:             return queryRoute.usage
 ```
 
 ## Local Development
@@ -150,6 +167,7 @@ Try:
 http://localhost:8787/rien7/github-llm
 http://localhost:8787/rien7/github-llm/tree/main/src
 http://localhost:8787/rien7/github-llm/blob/main/src/index.ts
+http://localhost:8787/query?repo=rien7%2Fgithub-llm&q=index
 ```
 
 For local development, you can create `.dev.vars` from the example file:
@@ -169,8 +187,10 @@ GITHUB_TOKEN=github_pat_xxxxxxxxxxxxxxxxxxxx
 - `GET` and `HEAD` are supported. Other methods return `405`.
 - Public repositories can be accessed without authentication because GitHub allows unauthenticated access to public resources on the repository contents endpoint.
 - The practical unauthenticated limit is 60 REST API requests per hour per originating IP. Authenticated requests are typically 5,000 per hour.
+- `/query` is different: GitHub's code search API currently rejects unauthenticated requests with `401 Requires authentication`, so configure `GITHUB_TOKEN` if you want repository search.
 - For fine-grained PATs, `Contents: Read-only` is required when the token needs to access private repositories through the contents endpoint. It is not required just to read public resources.
 - This project does not scrape GitHub HTML pages. It uses the GitHub API for metadata and `raw.githubusercontent.com` for file bytes.
+- HTML responses include a hidden `data-llm-interface="github-code-search"` block that documents `/query` for LLM consumers without rendering it to normal users.
 
 ## References
 

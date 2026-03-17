@@ -2,6 +2,7 @@ import type {
     DecodePathnameResult,
     GitHubEntry,
     GitHubRouteParseResult,
+    QueryRouteParseResult,
     RepoId,
 } from "./types";
 
@@ -58,6 +59,43 @@ export function parseGitHubRoute(pathname: string): GitHubRouteParseResult {
         kind: mode,
         repo,
         refAndPathSegments: rest,
+    };
+}
+
+export function parseQueryRoute(url: URL): QueryRouteParseResult {
+    const pathname = url.pathname.replace(/\/+$/g, "") || "/";
+    if (pathname !== "/query") {
+        return { ok: false, usage: true };
+    }
+
+    const repoValue = url.searchParams.get("repo")?.trim() ?? "";
+    const query = url.searchParams.get("q")?.trim() ?? "";
+    if (!repoValue || !query) {
+        return { ok: false, usage: true };
+    }
+
+    const normalizedRepo = repoValue.replace(/^\/+|\/+$/g, "");
+    const repoSegments = normalizedRepo.split("/");
+    if (repoSegments.length !== 2) {
+        return {
+            ok: false,
+            message: "The repo parameter must be in owner/repo format.",
+        };
+    }
+
+    const [owner, repoName] = repoSegments;
+    if (!isSafePathSegment(owner) || !isSafePathSegment(repoName)) {
+        return {
+            ok: false,
+            message: "Invalid repo parameter. Expected owner/repo.",
+        };
+    }
+
+    return {
+        ok: true,
+        kind: "query",
+        repo: { owner, name: repoName },
+        query,
     };
 }
 

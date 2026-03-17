@@ -1,14 +1,21 @@
 import { encodeRepoPath } from "./routing";
 import { textResponse } from "./render";
 import type {
+    GitHubCodeSearchItem,
+    GitHubCodeSearchResponse,
     GitHubEntry,
     GitHubMetadata,
+    GitHubTextMatch,
     RepoId,
     ResolvedGitHubResource,
+    SearchResultLine,
+    SearchResultPayload,
+    SearchResultSnippet,
 } from "./types";
 
 const GITHUB_API_BASE = "https://api.github.com";
 const GITHUB_RAW_FILE_SIZE_LIMIT_BYTES = 100 * 1024 * 1024;
+const GITHUB_CODE_SEARCH_RESULT_LIMIT = 10;
 const GITHUB_API_BASE_HEADERS = {
     Accept: "application/vnd.github+json",
     "User-Agent": "github-llm-worker",
@@ -223,6 +230,34 @@ export async function classifyResolvedNotFound(
     );
 }
 
+export async function searchRepositoryCode(
+    repo: RepoId,
+    query: string,
+    githubToken?: string,
+): Promise<SearchResultPayload | Response> {
+    const response = await fetchCodeSearch(repo, query, githubToken);
+    if (!response.ok) {
+        return searchErrorResponse(response);
+    }
+
+    const payload = (await response.json()) as GitHubCodeSearchResponse;
+    const snippets = await Promise.all(
+        payload.items.map((item) =>
+            buildSearchResultSnippet(repo, item, query, githubToken),
+        ),
+    );
+
+    return {
+        repo,
+        query,
+        totalCount: payload.total_count,
+        incompleteResults: payload.incomplete_results,
+        results: snippets.filter(
+            (snippet): snippet is SearchResultSnippet => snippet !== null,
+        ),
+    };
+}
+
 function buildGitHubApiHeaders(githubToken?: string): Headers {
     const headers = new Headers(GITHUB_API_BASE_HEADERS);
     const trimmedToken = githubToken?.trim();
@@ -230,6 +265,12 @@ function buildGitHubApiHeaders(githubToken?: string): Headers {
         headers.set("Authorization", `Bearer ${trimmedToken}`);
     }
 
+    return headers;
+}
+
+function buildGitHubCodeSearchHeaders(githubToken?: string): Headers {
+    const headers = buildGitHubApiHeaders(githubToken);
+    headers.set("Accept", "application/vnd.github.text-match+json");
     return headers;
 }
 
@@ -243,6 +284,320 @@ function forwardFileRequestHeaders(headers: Headers): Headers {
     }
 
     return forwarded;
+}
+
+async function fetchCodeSearch(
+    repo: RepoId,
+    query: string,
+    githubToken?: string,
+): Promise<Response> {
+    const searchUrl = new URL(`${GITHUB_API_BASE}/search/code`);
+    searchUrl.searchParams.set("q", `${query} repo:${repo.owner}/${repo.name}`.trim());
+    searchUrl.searchParams.set("per_page", String(GITHUB_CODE_SEARCH_RESULT_LIMIT));
+
+    return fetch(searchUrl, {
+        headers: buildGitHubCodeSearchHeaders(githubToken),
+    });
+}
+
+async function searchErrorResponse(response: Response): Promise<Response> {
+    let message = "";
+    try {
+        const payload = (await response.clone().json()) as { message?: string };
+        if (payload.message) {
+            message = payload.message;
+        }
+    } catch {
+        // Ignore non-JSON responses.
+    }
+
+    if (response.status === 401) {
+        return textResponse(
+            "GitHub code search requires an authenticated request from this Worker. Configure the GITHUB_TOKEN secret before using /query.",
+            503,
+        );
+    }
+
+    const rateLimitRemaining = response.headers.get("x-ratelimit-remaining");
+    if (response.status === 403 && rateLimitRemaining === "0") {
+        return textResponse(
+            "GitHub code search rate limit reached. Retry later or configure a token with higher limits.",
+            502,
+        );
+    }
+
+    if (response.status === 422) {
+        return textResponse(
+            `GitHub code search rejected the query.${message ? ` ${message}` : ""}`.trim(),
+            400,
+        );
+    }
+
+    return textResponse(
+        `GitHub code search failed with status ${response.status}.${message ? ` ${message}` : ""}`.trim(),
+        502,
+    );
+}
+
+async function buildSearchResultSnippet(
+    repo: RepoId,
+    item: GitHubCodeSearchItem,
+    query: string,
+    githubToken?: string,
+): Promise<SearchResultSnippet | null> {
+    const content = await fetchTextFile(item, repo, githubToken);
+    if (content === null) {
+        return null;
+    }
+
+    const normalizedContent = content.replaceAll("\r\n", "\n");
+    const location = locateBestMatch(normalizedContent, item.text_matches, query);
+    const lines = normalizedContent.split("\n");
+    const targetLineIndex = location
+        ? countNewlines(normalizedContent, location.matchStart)
+        : findFallbackLineIndex(lines, query);
+    const safeLineIndex = clamp(targetLineIndex, 0, Math.max(lines.length - 1, 0));
+    const contextStart = Math.max(0, safeLineIndex - 2);
+    const contextEnd = Math.min(lines.length - 1, safeLineIndex + 2);
+    const snippetLines: SearchResultLine[] = [];
+
+    for (let index = contextStart; index <= contextEnd; index += 1) {
+        const lineText = lines[index] ?? "";
+        let highlightStart: number | undefined;
+        let highlightEnd: number | undefined;
+
+        if (index === safeLineIndex && location) {
+            const lineStartOffset = findLineStartOffset(normalizedContent, safeLineIndex);
+            highlightStart = Math.max(0, location.matchStart - lineStartOffset);
+            highlightEnd = Math.min(
+                lineText.length,
+                location.matchEnd - lineStartOffset,
+            );
+
+            if (highlightStart >= highlightEnd) {
+                highlightStart = undefined;
+                highlightEnd = undefined;
+            }
+        }
+
+        snippetLines.push({
+            lineNumber: index + 1,
+            text: lineText,
+            highlightStart,
+            highlightEnd,
+        });
+    }
+
+    return {
+        path: item.path,
+        htmlUrl: buildLineAnchoredHtmlUrl(item.html_url, safeLineIndex + 1),
+        lineNumber: safeLineIndex + 1,
+        lines: snippetLines,
+    };
+}
+
+async function fetchTextFile(
+    item: GitHubCodeSearchItem,
+    repo: RepoId,
+    githubToken?: string,
+): Promise<string | null> {
+    const response = item.url
+        ? await fetch(item.url, {
+              headers: buildGitHubApiHeaders(githubToken),
+          })
+        : await fetchRepoMetadata(repo, item.path, githubToken);
+    if (!response.ok) {
+        return null;
+    }
+
+    const payload = (await response.json()) as {
+        type?: string;
+        encoding?: string;
+        content?: string;
+    };
+    if (payload.type !== "file" || payload.encoding !== "base64" || !payload.content) {
+        return null;
+    }
+
+    try {
+        return decodeGitHubBase64(payload.content);
+    } catch {
+        return null;
+    }
+}
+
+function locateBestMatch(
+    content: string,
+    textMatches: GitHubTextMatch[] | undefined,
+    query: string,
+): { matchStart: number; matchEnd: number } | null {
+    for (const match of textMatches ?? []) {
+        if (match.property && match.property !== "content") {
+            continue;
+        }
+
+        const fragment = match.fragment?.trim();
+        if (fragment) {
+            const fragmentIndex = content.indexOf(fragment);
+            if (fragmentIndex >= 0) {
+                for (const region of match.matches ?? []) {
+                    if (!region.indices || region.indices.length !== 2) {
+                        continue;
+                    }
+
+                    const [rawStart, rawEnd] = region.indices;
+                    const indexedSlice = fragment.slice(rawStart, rawEnd);
+                    const candidateText = region.text?.trim();
+                    const correctedStart =
+                        candidateText &&
+                        indexedSlice.toLowerCase() !== candidateText.toLowerCase()
+                            ? fragment.toLowerCase().indexOf(candidateText.toLowerCase())
+                            : rawStart;
+                    const safeStart = correctedStart >= 0 ? correctedStart : rawStart;
+                    const safeEnd = safeStart + (candidateText?.length ?? Math.max(0, rawEnd - rawStart));
+
+                    return {
+                        matchStart: fragmentIndex + safeStart,
+                        matchEnd: fragmentIndex + safeEnd,
+                    };
+                }
+
+                return {
+                    matchStart: fragmentIndex,
+                    matchEnd: fragmentIndex + fragment.length,
+                };
+            }
+        }
+
+        for (const region of match.matches ?? []) {
+            const candidateText = region.text?.trim();
+            if (!candidateText) {
+                continue;
+            }
+
+            const directIndex = content.indexOf(candidateText);
+            if (directIndex >= 0) {
+                return {
+                    matchStart: directIndex,
+                    matchEnd: directIndex + candidateText.length,
+                };
+            }
+
+            const insensitiveIndex = content
+                .toLowerCase()
+                .indexOf(candidateText.toLowerCase());
+            if (insensitiveIndex >= 0) {
+                return {
+                    matchStart: insensitiveIndex,
+                    matchEnd: insensitiveIndex + candidateText.length,
+                };
+            }
+        }
+
+    }
+
+    return locateQueryFallback(content, query);
+}
+
+function locateQueryFallback(
+    content: string,
+    query: string,
+): { matchStart: number; matchEnd: number } | null {
+    const lowerContent = content.toLowerCase();
+    for (const term of extractSearchTerms(query)) {
+        const index = lowerContent.indexOf(term.toLowerCase());
+        if (index >= 0) {
+            return {
+                matchStart: index,
+                matchEnd: index + term.length,
+            };
+        }
+    }
+
+    return null;
+}
+
+function extractSearchTerms(query: string): string[] {
+    const quotedTerms = Array.from(
+        query.matchAll(/"([^"]+)"/g),
+        (match) => match[1]?.trim() ?? "",
+    ).filter(Boolean);
+    const bareTerms = query
+        .replace(/"[^"]+"/g, " ")
+        .split(/\s+/)
+        .map((term) => term.trim())
+        .filter(
+            (term) =>
+                term.length > 1 &&
+                !term.includes(":") &&
+                !term.startsWith("-"),
+        );
+
+    return [...quotedTerms, ...bareTerms];
+}
+
+function countNewlines(content: string, offset: number): number {
+    let lineIndex = 0;
+    for (let index = 0; index < offset && index < content.length; index += 1) {
+        if (content[index] === "\n") {
+            lineIndex += 1;
+        }
+    }
+
+    return lineIndex;
+}
+
+function findLineStartOffset(content: string, lineIndex: number): number {
+    if (lineIndex <= 0) {
+        return 0;
+    }
+
+    let currentLine = 0;
+    for (let index = 0; index < content.length; index += 1) {
+        if (content[index] === "\n") {
+            currentLine += 1;
+            if (currentLine === lineIndex) {
+                return index + 1;
+            }
+        }
+    }
+
+    return content.length;
+}
+
+function findFallbackLineIndex(lines: string[], query: string): number {
+    const loweredLines = lines.map((line) => line.toLowerCase());
+    for (const term of extractSearchTerms(query)) {
+        const loweredTerm = term.toLowerCase();
+        const lineIndex = loweredLines.findIndex((line) => line.includes(loweredTerm));
+        if (lineIndex >= 0) {
+            return lineIndex;
+        }
+    }
+
+    return 0;
+}
+
+function buildLineAnchoredHtmlUrl(
+    htmlUrl: string | null | undefined,
+    lineNumber: number,
+): string {
+    if (!htmlUrl) {
+        return "#";
+    }
+
+    return `${htmlUrl}#L${lineNumber}`;
+}
+
+function decodeGitHubBase64(value: string): string {
+    const normalized = value.replace(/\s+/g, "");
+    const binary = atob(normalized);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+}
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
 }
 
 async function fetchLastModifiedAt(

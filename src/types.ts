@@ -9,6 +9,13 @@ export interface RepoId {
 
 export type GitHubRouteKind = "repo-root" | "tree" | "blob";
 
+export interface SearchRoute {
+    ok: true;
+    kind: "query";
+    repo: RepoId;
+    query: string;
+}
+
 export interface GitHubEntry {
     name: string;
     type: string;
@@ -56,6 +63,7 @@ export interface RouteError {
 
 export type ParsedGitHubRoute = RepoRootRoute | ResourceRoute;
 export type GitHubRouteParseResult = ParsedGitHubRoute | RouteError;
+export type QueryRouteParseResult = SearchRoute | RouteError;
 
 export interface DecodedPathname {
     ok: true;
@@ -92,3 +100,51 @@ export type ResolvedGitHubResource =
     | ResolvedGitHubResourceSuccess
     | ResolvedGitHubResourceNotFound
     | ResolvedGitHubResourceFailure;
+
+export interface GitHubTextMatchRegion {
+    text?: string;
+    indices?: [number, number];
+}
+
+export interface GitHubTextMatch {
+    object_type?: string;
+    property?: string;
+    fragment?: string;
+    matches?: GitHubTextMatchRegion[];
+}
+
+export interface GitHubCodeSearchItem {
+    path: string;
+    sha: string;
+    url?: string;
+    html_url?: string | null;
+    text_matches?: GitHubTextMatch[];
+}
+
+export interface GitHubCodeSearchResponse {
+    total_count: number;
+    incomplete_results: boolean;
+    items: GitHubCodeSearchItem[];
+}
+
+export interface SearchResultLine {
+    lineNumber: number;
+    text: string;
+    highlightStart?: number;
+    highlightEnd?: number;
+}
+
+export interface SearchResultSnippet {
+    path: string;
+    htmlUrl: string;
+    lineNumber: number;
+    lines: SearchResultLine[];
+}
+
+export interface SearchResultPayload {
+    repo: RepoId;
+    query: string;
+    totalCount: number;
+    incompleteResults: boolean;
+    results: SearchResultSnippet[];
+}

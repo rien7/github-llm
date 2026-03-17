@@ -6,12 +6,14 @@ import {
     proxyRawFile,
     repoNotFoundResponse,
     resolveGitHubResource,
+    searchRepositoryCode,
 } from "./github";
-import { parseGitHubRoute } from "./routing";
+import { parseGitHubRoute, parseQueryRoute } from "./routing";
 import {
     isDirectoryMetadata,
     isFileMetadata,
     renderDirectoryListing,
+    renderSearchResults,
     textResponse,
     usageResponse,
 } from "./render";
@@ -25,7 +27,27 @@ export default {
             });
         }
 
-        const route = parseGitHubRoute(new URL(request.url).pathname);
+        const url = new URL(request.url);
+        if (url.pathname.replace(/\/+$/g, "") === "/query") {
+            const queryRoute = parseQueryRoute(url);
+            if (!queryRoute.ok) {
+                return queryRoute.usage
+                    ? usageResponse(request.url)
+                    : textResponse(queryRoute.message ?? "Bad Request", 400);
+            }
+
+            const searchResponse = await searchRepositoryCode(
+                queryRoute.repo,
+                queryRoute.query,
+                env.GITHUB_TOKEN,
+            );
+
+            return searchResponse instanceof Response
+                ? searchResponse
+                : renderSearchResults(searchResponse);
+        }
+
+        const route = parseGitHubRoute(url.pathname);
         if (!route.ok) {
             return route.usage
                 ? usageResponse(request.url)
